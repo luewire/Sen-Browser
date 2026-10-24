@@ -1,0 +1,4 @@
+module CAdblock [system] {
+    header "adblock_engine.h"
+    export *
+}

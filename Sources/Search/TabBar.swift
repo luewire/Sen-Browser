@@ -4,9 +4,10 @@ import SwiftUI
 /// slides from the tab you left to the tab you picked rather than blinking out
 /// of one and into the other.
 struct TabBar: View {
-    /// The room kept at the start for the window's buttons: none to speak of
-    /// in full screen, where macOS takes them away (idea 184).
-    private var lights: CGFloat { browser.fullScreen ? 12 : Metrics.lights }
+    /// Space reserved on the left for traffic lights.
+    private var lights: CGFloat { Metrics.lights }
+    /// Space taken by the exit button during video fullscreen.
+    private var exitWidth: CGFloat { browser.active?.immersed == true ? 56 + Metrics.tabGap : 0 }
 
     @ObservedObject var browser: Browser
 
@@ -36,13 +37,33 @@ struct TabBar: View {
             ZStack(alignment: .leading) {
                 // The empty half of the strip is what you grab to move the
                 // window; the tabs keep the run they sit on.
-                DragStrip(reserved: lights + dot + leading + (making ? min(540, room(in: geo.size.width)) : run(in: geo.size.width)) + Metrics.tabGap + Metrics.plusWidth, trailing: doors + 12, onDoubleClick: browser.newTab)
+                DragStrip(reserved: lights + exitWidth + dot + leading + (making ? min(540, room(in: geo.size.width)) : run(in: geo.size.width)) + Metrics.tabGap + Metrics.plusWidth, trailing: doors + 12, onDoubleClick: { browser.newTab(alwaysCreate: true) })
                 // And the corner the lights sit in, which is title bar too —
                 // the one stretch left to take hold of when tabs fill the row.
                 DragStrip()
                     .frame(width: lights)
 
                 HStack(spacing: Metrics.tabGap) {
+                    if browser.active?.immersed == true {
+                        Button {
+                            browser.active?.built?.evaluateJavaScript("if (document.exitFullscreen) { document.exitFullscreen(); } else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }", completionHandler: nil)
+                            browser.active?.immersed = false
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("Exit")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Palette.muted.opacity(0.18)))
+                            .foregroundStyle(Palette.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Keluar dari Layar Penuh Video")
+                    }
+
                     // Back, forward and reload by the lights, when asked.
                     if browser.prefs.navigationLeft { Helm(browser: browser) }
                     // The space on screen, first, when there are spaces.
@@ -135,7 +156,7 @@ struct TabBar: View {
                     // The way to a new page, right after the tabs rather than
                     // at the end of their run, so it is there however far the
                     // run has scrolled. Out of sight until the pointer is up here.
-                    Button { browser.launch() } label: {
+                    Button { browser.newTab(alwaysCreate: true) } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Palette.muted)
@@ -163,6 +184,7 @@ struct TabBar: View {
                         // Only while a download is running, and a moment after.
                         FetchDoor(browser: browser, fetches: browser.fetches)
                         ExtensionSlot()
+                        ShieldButton(browser: browser)
                         if !browser.prefs.navigationLeft {
                             Helm(browser: browser).padding(.trailing, 8)
                         }
@@ -194,6 +216,13 @@ struct TabBar: View {
         }
         .background {
             ZStack {
+                if browser.fullScreen || browser.active?.immersed == true {
+                    Palette.ground
+                    Rectangle()
+                        .fill(Palette.hairline)
+                        .frame(height: 1)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
                 landing ? Palette.hover : Color.clear
                 if browser.prefs.splitView {
                     SplitDropZone(browser: browser, tab: nil, kind: .strip)
@@ -391,7 +420,7 @@ struct TabBar: View {
     /// unless the helm leads, when nothing at the far end may be a real zero.
     private func room(in strip: CGFloat) -> CGFloat {
         let far = doors > 0 || browser.prefs.navigationLeft ? doors : Metrics.helm + 26
-        return max(0, strip - lights - dot - leading - 12 - Metrics.plusWidth - far - 3 * Metrics.tabGap)
+        return max(0, strip - lights - exitWidth - dot - leading - 12 - Metrics.plusWidth - far - 3 * Metrics.tabGap)
     }
 
     /// What the space's dot takes before the tabs, when there are spaces.

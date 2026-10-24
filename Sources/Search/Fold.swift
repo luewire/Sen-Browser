@@ -229,7 +229,7 @@ struct Fold: View {
 
     /// Folded, and not taken over by a page filling the screen.
     private var folding: Bool {
-        browser.folded && browser.active?.immersed != true
+        browser.folded
     }
 
     private var lightsOff: Bool {
@@ -370,7 +370,7 @@ struct Fold: View {
         // missing from it, or out of reach behind the column (#241).
         if browser.window?.styleMask.contains(.fullScreen) == true {
             bar.layer?.removeAnimation(forKey: "fold")
-            bar.isHidden = false
+            bar.isHidden = true
             return
         }
         if prefs.sidebar {

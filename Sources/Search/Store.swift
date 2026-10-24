@@ -98,7 +98,8 @@ enum Store {
     /// differ from stores made by identifier in how long extension workers
     /// are let live.
     static var ownContainer: Bool {
-        (Bundle.main.bundleIdentifier ?? "") != "com.officecommun.search"
+        let id = Bundle.main.bundleIdentifier ?? ""
+        return id != "com.officecommun.search" && id != "com.luewire.searchshield" && id != "com.luewire.sen"
     }
 
     /// The fixed identifiers of a test world's WebKit stores: 1 for websites,
@@ -116,20 +117,16 @@ enum Store {
         return UUID(uuidString: text)!
     }
 
-    /// The app was called Office Browser until September 2026. Everything it
-    /// kept — the session, the pins, the history, what is hidden on each site
-    /// — moves to the new name the first time the new name runs, and the
-    /// settings are copied across. Nothing is left to be lost.
+    /// Isolated data directory for Sen: session, pins, history,
+    /// bookmarks and shield settings live in "Sen".
     static let folder: URL = {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let home = support.appendingPathComponent(world.map { "Search (\($0))" } ?? "Search", isDirectory: true)
-        if !testing {
-            let old = support.appendingPathComponent("Office Browser", isDirectory: true)
-            let files = FileManager.default
-            if !files.fileExists(atPath: home.path), files.fileExists(atPath: old.path) {
-                try? files.moveItem(at: old, to: home)
-            }
+        let defaultName = "Sen"
+        let home = support.appendingPathComponent(world.map { "\(defaultName) (\($0))" } ?? defaultName, isDirectory: true)
+        let oldHome = support.appendingPathComponent(world.map { "Search Shield (\($0))" } ?? "Search Shield", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: home.path) && FileManager.default.fileExists(atPath: oldHome.path) {
+            try? FileManager.default.moveItem(at: oldHome, to: home)
         }
         return home
     }()

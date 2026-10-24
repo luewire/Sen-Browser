@@ -19,6 +19,7 @@ struct SearchApp: App {
     private var browser: Browser { front.browser ?? SceneSlot.shared.browser }
 
     init() {
+        _ = NSWindow.swizzleToggleFullScreen
         // Settings › General › Start with a fresh window: the files are cut
         // down before any window reads its row from them.
         if Store.settings.bool(forKey: Preferences.freshKey) {
@@ -304,13 +305,9 @@ struct SearchApp: App {
                 Button("Clear History") { browser.clearHistory() }
                     .shortcut("history.clear")
             }
-            // Search › Check for Updates…, under About, as in any Mac app.
-            CommandGroup(after: .appInfo) { UpdateMenuItem() }
             CommandGroup(after: .appSettings) {
                 Button("Settings…") { browser.tuning = true }
                     .shortcut("app.settings")
-                Button("Welcome…") { browser.welcoming = true }
-                    .shortcut("app.welcome")
                 Button("Passwords…") { browser.managing = true }
                     .shortcut("app.passwords")
             }
@@ -409,7 +406,7 @@ struct ContentView: View {
             // that survives the transition is not a white band across the top.
             // With the tabs down the side, the ground the page's card and the
             // column sit on (see CardEdge).
-            (fullscreenTab != nil ? Color.black : cards ? Palette.frame : Palette.ground)
+            (cards ? Palette.frame : Palette.ground)
 
             // One stage, always. It starts beside the column and under the
             // strip, not behind them — a page sliding beneath floating chrome
@@ -448,8 +445,9 @@ struct ContentView: View {
                     .transition(.move(edge: sideOnRight ? .trailing : .leading))
             }
 
-            if !browser.prefs.sidebar, !browser.folded, fullscreenTab == nil {
+            if !browser.prefs.sidebar, !browser.folded {
                 TabBar(browser: browser)
+                    .zIndex(100)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
@@ -736,7 +734,7 @@ struct ContentView: View {
         window_
             // The column folded away, and out again at the edge (see Fold.swift).
             .overlay(alignment: sideOnRight ? .trailing : .leading) {
-                if fullscreenTab == nil { Fold(browser: browser, prefs: browser.prefs) }
+                Fold(browser: browser, prefs: browser.prefs)
             }
             .overlay(alignment: .bottom) { bars }
             .overlay {
@@ -791,18 +789,30 @@ struct ContentView: View {
                 if let window, (note.object as? NSWindow) === window { browser.tabSwitcher.cancel() }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
-                if let window, (note.object as? NSWindow) === window { browser.fullScreen = true }
+                if let window, (note.object as? NSWindow) === window {
+                    browser.fullScreen = true
+                    window.standardWindowButton(.closeButton)?.superview?.isHidden = true
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { note in
-                if let window, (note.object as? NSWindow) === window { browser.fullScreen = false }
+                if let window, (note.object as? NSWindow) === window {
+                    browser.fullScreen = false
+                    window.standardWindowButton(.closeButton)?.superview?.isHidden = false
+                }
             }
             // And as it is once there, or back: a way in that macOS gave up
             // on half way says so only by where the window ends up.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
-                if let window, (note.object as? NSWindow) === window { browser.fullScreen = window.styleMask.contains(.fullScreen) }
+                if let window, (note.object as? NSWindow) === window {
+                    browser.fullScreen = window.styleMask.contains(.fullScreen)
+                    window.standardWindowButton(.closeButton)?.superview?.isHidden = browser.fullScreen
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
-                if let window, (note.object as? NSWindow) === window { browser.fullScreen = window.styleMask.contains(.fullScreen) }
+                if let window, (note.object as? NSWindow) === window {
+                    browser.fullScreen = window.styleMask.contains(.fullScreen)
+                    window.standardWindowButton(.closeButton)?.superview?.isHidden = browser.fullScreen
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 resting?.isHidden = true
@@ -815,7 +825,10 @@ struct ContentView: View {
                     handBack()
                 }
             }
-            .onChange(of: browser.activeID) { _, _ in handBack() }
+            .onChange(of: browser.activeID) { _, _ in
+                handBack()
+                browser.syncFullscreenWindows(for: browser.active)
+            }
             .animation(Motion.settle, value: browser.recalling)
             .animation(Motion.settle, value: browser.hoarding)
             .animation(Motion.settle, value: browser.tuning)
@@ -1003,13 +1016,12 @@ struct ContentView: View {
 
     /// True while the tabs are down the left, and not folded away (see Fold.swift).
     private var sidebar: Bool {
-        browser.prefs.sidebar && !browser.folded && fullscreenTab == nil
+        browser.prefs.sidebar && !browser.folded
     }
 
     /// The column has its own corner for the lights, so the page beside it
     /// starts at the very top; the strip needs a band.
     private var band: CGFloat {
-        guard fullscreenTab == nil else { return 0 }
         // Folded, the strip is out of the window and the page has its height.
         return browser.prefs.sidebar || browser.folded ? 0 : Metrics.strip
     }
@@ -1062,6 +1074,7 @@ struct ContentView: View {
             immersionRevision += 1
             roomTicket += 1
             room = chrome
+            browser.peeking = false
         }
     }
 

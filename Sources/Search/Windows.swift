@@ -476,3 +476,44 @@ extension Browser {
         return prefs.usesSpaces ? "\(page) — \(space.name)" : page
     }
 }
+
+private var isSwitchingTabsKey: UInt8 = 0
+
+extension NSWindow {
+    @MainActor
+    var isSwitchingTabs: Bool {
+        get {
+            (objc_getAssociatedObject(self, &isSwitchingTabsKey) as? Bool) ?? false
+        }
+        set {
+            objc_setAssociatedObject(self, &isSwitchingTabsKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
+    @MainActor
+    static let swizzleToggleFullScreen: Void = {
+        let originalSelector = #selector(NSWindow.toggleFullScreen(_:))
+        let swizzledSelector = #selector(NSWindow.search_toggleFullScreen(_:))
+        guard let originalMethod = class_getInstanceMethod(NSWindow.self, originalSelector),
+              let swizzledMethod = class_getInstanceMethod(NSWindow.self, swizzledSelector) else { return }
+        method_exchangeImplementations(originalMethod, swizzledMethod)
+    }()
+
+    @objc dynamic func search_toggleFullScreen(_ sender: Any?) {
+        let className = String(describing: type(of: self))
+        // Never intercept or block fullscreen transitions on WebKit's internal fullscreen windows
+        if className.contains("FullScreen") || className.contains("WebCore") {
+            search_toggleFullScreen(sender)
+            return
+        }
+
+        // When switching tabs or during WebKit element teardown, WebKit invokes
+        // [window toggleFullScreen:nil] with sender == nil on the main browser window.
+        // Prevent WebKit from dropping the entire browser window out of macOS fullscreen:
+        if self.styleMask.contains(.fullScreen) && (self.isSwitchingTabs || sender == nil) {
+            return
+        }
+        search_toggleFullScreen(sender)
+    }
+}
+

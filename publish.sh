@@ -14,12 +14,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 [ $# -eq 1 ] || { echo "usage: ./publish.sh <folder>" >&2; exit 1; }
 ARCH="${SEARCH_ARCH:-arm64}"
-case "$ARCH" in
-  arm64) FROM="build"; FOLDER="$1" ;;
-  x86_64) FROM="build/intel"; FOLDER="${1%/}/intel" ;;
-  *) echo "SEARCH_ARCH is arm64 or x86_64, not “$ARCH”" >&2; exit 1 ;;
-esac
-FILES=(Search.dmg Search.zip appcast.json appcast.json.zip)
+if [ "$ARCH" != "arm64" ]; then
+  echo "Distribution target is Apple Silicon (arm64) only." >&2
+  exit 1
+fi
+FROM="build"; FOLDER="$1"
+FILES=(Sen.dmg Sen.zip appcast.json appcast.json.zip)
 
 for FILE in "${FILES[@]}"; do
   [ -f "$FROM/$FILE" ] || { echo "$FROM/$FILE is missing — ./build.sh release dmg makes it" >&2; exit 1; }

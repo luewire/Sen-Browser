@@ -337,8 +337,12 @@ final class StageView: NSView {
         // come back before that (see Tab.immersed), the page comes home at
         // its own size and is laid out once.
         if let web = wanted as? WKWebView, web.fullscreenState != .notInFullscreen {
-            for view in subviews where view !== web && Self.isPlaceholder(view) && view.frame != bounds {
-                view.frame = bounds
+            for view in subviews where view !== web && !Self.isPlaceholder(view) && view !== parting {
+                view.removeFromSuperview()
+            }
+            for view in subviews where view !== web && Self.isPlaceholder(view) {
+                view.isHidden = false
+                if view.frame != bounds { view.frame = bounds }
             }
             return
         }
@@ -354,6 +358,10 @@ final class StageView: NSView {
             // window and not hidden, not whether anything shows of it.
             if view === parting {
                 view.alphaValue = 0
+                continue
+            }
+            if Self.isPlaceholder(view) {
+                view.isHidden = true
                 continue
             }
             view.removeFromSuperview()
@@ -384,6 +392,9 @@ final class StageView: NSView {
         // With the inspector docked, WebKit lays the page and it out side by
         // side as this view changes size; setting the page's frame here would
         // cover the inspector.
+        if (wanted as? PageView)?.unpainted == false && wanted.alphaValue < 1 {
+            wanted.alphaValue = 1
+        }
         if !(docked && subviews.contains(where: Self.isInspector)) {
             wanted.frame = bounds
         }

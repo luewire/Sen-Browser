@@ -1,0 +1,23 @@
+{
+  "total_input_lines": 298632,
+  "network_blocks_converted": 50000,
+  "network_exceptions_converted": 8539,
+  "cosmetic_rules_converted": 25000,
+  "total_rules_generated": 92078,
+  "chunk_count": 3,
+  "skipped_rules_by_reason": {
+    "BadFilter": 97,
+    "NetworkGenerichideUnsupported": 1896,
+    "NoSupportedNetworkOptions(NetworkFilterMask(FROM_WEBSOCKET))": 8,
+    "FullRegexUnsupported": 296,
+    "NoSupportedNetworkOptions(NetworkFilterMask(FROM_OBJECT))": 4,
+    "NoSupportedNetworkOptions(NetworkFilterMask(FROM_PING))": 23,
+    "NoSupportedNetworkOptions(NetworkFilterMask(FROM_OTHER | FROM_PING))": 1,
+    "UnlessAndIfDomainTogetherUnsupported": 8,
+    "CosmeticEntitiesUnsupported": 821,
+    "RuleContainsNonASCII": 205,
+    "NoSupportedNetworkOptions(NetworkFilterMask(FROM_OTHER))": 4
+  },
+  "filter_hash": "86fd1e6b5df9d94bc7ae292bcc10cb62bbea22e03873970c394701adfec3883e",
+  "badware_domains": []
+}

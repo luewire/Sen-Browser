@@ -1860,17 +1860,11 @@ final class Browser: NSObject, ObservableObject {
             : restored.active.flatMap { id in tabs.first { $0.id == id } } ?? tabs.first { $0.pin == nil } ?? tabs.first
         guard let first = front else {
             // A blank tab costs nothing until it is asked for its page. Its
-            // web view — and with it WebKit's helper processes — is built a
-            // moment after the window is up, so that the first address typed
-            // finds everything already running, and the first frame never
-            // had to share the CPU with it.
+            // web view and WebKit helper processes are built only when navigated
+            // or selected, keeping idle launch footprint minimal.
             let tab = Tab(configuration: Web.configuration(space: spaceID))
             adopt(tab)
             activeID = tab.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak tab] in
-                guard let tab, tab.isBlank else { return }
-                _ = tab.web
-            }
             return
         }
         activeID = first.id
@@ -2842,7 +2836,7 @@ final class Browser: NSObject, ObservableObject {
         focusRequest += 1
     }
 
-    func newTab() {
+    func newTab(alwaysCreate: Bool = false) {
         // On a private tab, a new one is private too: ⌘T from a page that
         // keeps nothing and landing on one that keeps everything is how a
         // private search ends up in the history.
@@ -2860,11 +2854,14 @@ final class Browser: NSObject, ObservableObject {
             Extensions.shared.offerNewTabPage(into: tab)
             return
         }
-        // Reuse an empty tab at the chosen position, clearing its draft:
-        // repeated ⌘T must not leave a row of identical empty tabs.
-        if let blank = tabs.last(where: { $0.isBlank && !$0.bench && !$0.shy && split(for: $0) == nil }) {
+        // Reuse an empty tab at the chosen position, clearing its draft,
+        // ONLY if not explicitly told to always create, and only if that
+        // empty tab is not already the active front tab.
+        if !alwaysCreate,
+           let blank = tabs.last(where: { $0.isBlank && !$0.bench && !$0.shy && split(for: $0) == nil }),
+           blank.id != activeID {
             placeBlank(blank)
-            if activeID != blank.id { leaving() }
+            leaving()
             activeID = blank.id
             summoning = false
             typed = ""
@@ -2872,8 +2869,6 @@ final class Browser: NSObject, ObservableObject {
             editing = false
             focusRequest += 1
             rememberSession()
-            // Asked here too: the blank a window opens with is the one the
-            // first ⌘T after adding an extension lands on.
             if #available(macOS 15.4, *) { Extensions.shared.offerNewTabPage(into: blank) }
             return
         }
@@ -2903,6 +2898,29 @@ final class Browser: NSObject, ObservableObject {
         tabs[index] = page
         page.go(to: url)
         if activeID == tab.id { activeID = page.id; editing = false }
+    }
+
+    @MainActor
+    func syncFullscreenWindows(for tab: Tab?) {
+        let isImmersed = tab?.immersed == true
+        let anyImmersed = tabs.contains { $0.immersed }
+        for win in NSApp.windows {
+            let className = String(describing: type(of: win))
+            if className.contains("FullScreen") && !className.contains("Search") {
+                if !anyImmersed {
+                    win.orderOut(nil)
+                    win.close()
+                } else {
+                    win.alphaValue = isImmersed ? 1.0 : 0.0
+                    win.ignoresMouseEvents = !isImmersed
+                    if isImmersed {
+                        win.orderFront(nil)
+                    } else {
+                        win.orderBack(nil)
+                    }
+                }
+            }
+        }
     }
 
     func select(_ tab: Tab, floatPrevious: Bool = true) {
@@ -2936,6 +2954,13 @@ final class Browser: NSObject, ObservableObject {
         // it is never lifted and landed in the same breath.
         if floating == tab.id { land() }
         if floatPrevious { leaving() }
+        if fullScreen || window?.styleMask.contains(.fullScreen) == true {
+            window?.isSwitchingTabs = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.window?.isSwitchingTabs = false
+            }
+        }
+        syncFullscreenWindows(for: tab)
         activeID = tab.id
         tab.touch()
         // A tab brought back from last time, or waking from ⌘W while pinned,
@@ -2989,6 +3014,7 @@ final class Browser: NSObject, ObservableObject {
     /// behind; closing that blank tab closes the window.
     func close(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        if tab.immersed { tab.immersed = false }
         let pair = split(for: tab)
         let partner = pair.flatMap { pair in tabs.first { $0.id == pair.partner(of: tab.id) } }
         detachSplit(tab)
@@ -3034,6 +3060,7 @@ final class Browser: NSObject, ObservableObject {
                 activeID = fresh.id
                 typed = ""
                 removeEmptyGroup(tab.groupID)
+                syncFullscreenWindows(for: fresh)
             }
             return
         }
@@ -3059,6 +3086,7 @@ final class Browser: NSObject, ObservableObject {
             typed = ""
             removeEmptyGroup(tab.groupID)
             rememberSession()
+            syncFullscreenWindows(for: fresh)
             return
         }
 
@@ -3072,6 +3100,8 @@ final class Browser: NSObject, ObservableObject {
             // a tab, so one that was never built yet actually wakes up
             // instead of sitting there blank until a manual reload.
             select(partner ?? tabs[min(index, tabs.count - 1)])
+        } else {
+            syncFullscreenWindows(for: active)
         }
         rememberSession()
     }
@@ -4174,7 +4204,7 @@ final class Browser: NSObject, ObservableObject {
     /// Stepping away from a tab. A video you were watching does not stop
     /// existing because you went to look something up.
     private func leaving() {
-        guard prefs.floatsOnLeave else { return }
+        guard prefs.floatsOnLeave, active?.immersed != true else { return }
         lift(active, quietly: true, otherwise: otherPane)
     }
 
@@ -4226,7 +4256,7 @@ final class Browser: NSObject, ObservableObject {
         // Its page is lent to WebKit's full-screen window, and moving it out
         // into the floating one left that window up, empty and black, to
         // come back to.
-        guard tab.web.fullscreenState == .notInFullscreen else { return }
+        guard tab.web.fullscreenState == .notInFullscreen && !tab.immersed else { return }
         // On its own, only from a site whose video is the point of the site.
         // A hero background on a studio's home page is a video too, and it
         // followed people around the desktop. Nor from one you grounded in
@@ -5029,6 +5059,25 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             return
         }
 
+        // Clean links and HTTPS only for top-level navigation
+        if action.targetFrame?.isMainFrame == true, ["http", "https"].contains(scheme) {
+            var target = url
+            var redirected = false
+            if prefs.cleanLinks, let cleaned = CleanLinks.strip(target), cleaned != target {
+                target = cleaned
+                redirected = true
+            }
+            if prefs.httpsOnly, target.scheme?.lowercased() == "http", let secure = CleanLinks.upgradeToHTTPS(target), secure != target {
+                target = secure
+                redirected = true
+            }
+            if redirected {
+                decisionHandler(.cancel)
+                webView.load(URLRequest(url: target))
+                return
+            }
+        }
+
         // A website returning to a public extension page needs another view.
         if #available(macOS 15.4, *), routeExtensionReturn(action, from: webView) {
             decisionHandler(.cancel)
@@ -5108,11 +5157,32 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             tab.arm(hiding: curtain.css(on: host), to: url)
             // And the blocker, on or off for where it is going.
             Shield.shared.tune(webView.configuration.userContentController, for: host)
+            Shield.shared.clear(for: tab.id)
             // The frames that were told about the last page's darkening go
             // with it.
             tab.duskFrames.removeAll()
             // And the frames that played, and the count to the media keys.
             tab.leaving()
+        }
+
+        // Block deceptive top-level redirects and popunders to known ad networks or spam TLDs
+        if action.targetFrame?.isMainFrame == true,
+           let targetHost = url.host()?.lowercased(),
+           Shield.shared.isAdDomain(targetHost) {
+            decisionHandler(.cancel)
+            if let currentTab = tab(for: webView) {
+                currentTab.noteBlocked(url)
+                if let openerID = currentTab.opener, let openerTab = self.tabs.first(where: { $0.id == openerID }) {
+                    openerTab.noteBlocked(url)
+                }
+                // Auto-close if this tab is a newly opened popup tab without browsing history
+                if !webView.canGoBack && !webView.canGoForward {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.close(currentTab)
+                    }
+                }
+            }
+            return
         }
 
         // chrome-extension: an extension's own pages — options, a side
@@ -5226,6 +5296,16 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard let opener = popupTab(for: webView) else { return nil }
+
+        let sourceHost = (action.sourceFrame.securityOrigin.host.isEmpty ? webView.url?.host() : action.sourceFrame.securityOrigin.host)?.lowercased()
+        let targetHost = action.request.url?.host()?.lowercased()
+
+        // 1. Block popups and new tabs to known ad/popunder networks or spam TLDs
+        if let targetHost, Shield.shared.isAdDomain(targetHost) {
+            opener.noteBlocked(action.request.url)
+            return nil
+        }
+
         let clicked = opener.popupGesture.take(origin: PopupGesture.origin(action.sourceFrame), mainFrame: action.sourceFrame.isMainFrame)
         if !clicked {
             // A second window for a click that already had its one: the
@@ -5662,7 +5742,24 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
               let page = webView.url, let scheme = page.scheme, let host = page.host(),
               Browser.origin(scheme, host, page.port ?? 0) == site
         else { return decisionHandler(false) }
-        if let remembered = SiteNotifications.choices[site] { return decisionHandler(remembered) }
+
+        // 1. Auto-deny on known ad/spam domains
+        if Shield.shared.isAdDomain(origin.host) {
+            tab.noteBlocked(webView.url)
+            return decisionHandler(false)
+        }
+
+        // 2. Allow if the user previously explicitly granted permission for this origin
+        if let remembered = SiteNotifications.choices[site] {
+            return decisionHandler(remembered)
+        }
+
+        // 3. Auto-deny if Shield is active and site is not paused / whitelisted,
+        // preventing fake CAPTCHA "Click Allow to verify" prompts from appearing
+        if Shield.shared.enabled && !Shield.shared.isPaused(on: origin.host) {
+            tab.noteBlocked(webView.url)
+            return decisionHandler(false)
+        }
         ask(from: webView, show: { [weak self] in
             guard let self else { return decisionHandler(false) }
             guard decide == nil else { return decisionHandler(false) }
@@ -5733,6 +5830,9 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         popupTab(for: webView)?.popupGesture.clear()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak webView] in
+            (webView as? PageView)?.showFirstFrame()
+        }
         guard let tab = tab(for: webView) else {
             // A small window's page came: what failed before it is over.
             littleTab(for: webView)?.failure = nil

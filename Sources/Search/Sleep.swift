@@ -79,14 +79,14 @@ extension Browser {
     /// Started once, at launch. The same look closes the tabs left alone
     /// longest, when tabs close themselves (see Closing.swift).
     func watchForSleep() {
-        let every = min(60, max(5, Browser.sleepAfter / 4))
+        let every = max(30, min(120, Browser.sleepAfter / 4))
         let timer = Timer(timeInterval: every, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.sleepIdle()
                 self?.closeLeftAlone()
             }
         }
-        timer.tolerance = every / 4
+        timer.tolerance = every / 2
         RunLoop.main.add(timer, forMode: .common)
         dozing = timer
 
@@ -200,14 +200,25 @@ extension Browser {
                 done?(reason)
                 return
             }
-            tab.snapshot { [weak self, weak tab] picture in
+            tab.isPlayingMedia { [weak self, weak tab] playing in
                 guard let self, let tab else { return }
+                if playing {
+                    done?("playing media")
+                    return
+                }
                 if let reason = self.awake(because: tab) {
                     done?(reason)
                     return
                 }
-                tab.sleep(picture: picture)
-                done?("asleep")
+                tab.snapshot { [weak self, weak tab] picture in
+                    guard let self, let tab else { return }
+                    if let reason = self.awake(because: tab) {
+                        done?(reason)
+                        return
+                    }
+                    tab.sleep(picture: picture)
+                    done?("asleep")
+                }
             }
         }
     }

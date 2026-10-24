@@ -128,7 +128,8 @@ final class Favicons {
     /// otherwise have one look's icon overwrite the other's (#423).
     func fetch(for tab: Tab, changed: Bool = false) {
         guard let url = tab.address, let host = Favicons.site(url),
-              url.scheme?.hasPrefix("http") == true
+              url.scheme?.hasPrefix("http") == true,
+              let web = tab.built
         else { return }
 
         let dark = Favicons.dark
@@ -141,7 +142,7 @@ final class Favicons {
         guard !busy.contains(host), changed || !missing.contains(host) else { return }
         busy.insert(host)
 
-        tab.web.evaluateJavaScript(Favicons.probe) { [weak self, weak tab] answer, _ in
+        web.evaluateJavaScript(Favicons.probe) { [weak self, weak tab] answer, _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let declared = (answer as? [[String: String]]) ?? []
@@ -364,7 +365,7 @@ final class IconRelay: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame else { return }
         MainActor.assumeIsolated {
-            guard let tab, tab.built === message.webView else { return }
+            guard let tab, tab.built === message.webView, !tab.asleep else { return }
             Favicons.shared.fetch(for: tab, changed: true)
         }
     }

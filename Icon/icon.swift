@@ -107,6 +107,38 @@ func draw(_ size: CGFloat) -> NSImage {
     // is 824 of 1024 comes to three quarters of the plate.
     NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1).setFill()
     markPath(in: plate, fraction: 0.754).fill()
+
+    // Distinctive Shield Badge at the bottom right corner of the plate:
+    let badgeR = 150 * s
+    let badgeX = plate.maxX - badgeR * 1.25
+    let badgeY = plate.minY + badgeR * 0.25
+    let badgeRect = NSRect(x: badgeX, y: badgeY, width: badgeR, height: badgeR * 1.15)
+    let shield = NSBezierPath()
+    let mx = badgeRect.midX
+    let top = badgeRect.maxY
+    let bot = badgeRect.minY
+    let l = badgeRect.minX
+    let r = badgeRect.maxX
+    shield.move(to: NSPoint(x: mx, y: top))
+    shield.line(to: NSPoint(x: r, y: top - badgeR * 0.22))
+    shield.curve(to: NSPoint(x: mx, y: bot),
+                 controlPoint1: NSPoint(x: r, y: top - badgeR * 0.65),
+                 controlPoint2: NSPoint(x: mx + badgeR * 0.2, y: bot + badgeR * 0.15))
+    shield.curve(to: NSPoint(x: l, y: top - badgeR * 0.22),
+                 controlPoint1: NSPoint(x: mx - badgeR * 0.2, y: bot + badgeR * 0.15),
+                 controlPoint2: NSPoint(x: l, y: top - badgeR * 0.65))
+    shield.close()
+
+    NSGraphicsContext.saveGraphicsState()
+    let bShadow = NSShadow()
+    bShadow.shadowColor = NSColor.black.withAlphaComponent(0.28)
+    bShadow.shadowBlurRadius = 10 * s
+    bShadow.shadowOffset = NSSize(width: 0, height: -3 * s)
+    bShadow.set()
+    NSColor(red: 1.0, green: 0.40, blue: 0.10, alpha: 1.0).setFill()
+    shield.fill()
+    NSGraphicsContext.restoreGraphicsState()
+
     return image
 }
 

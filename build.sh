@@ -46,14 +46,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 CONFIG="${1:-release}"
 STEP="${2:-app}"
-ARCH="${SEARCH_ARCH:-$(uname -m)}"
-case "$ARCH" in
-  arm64) OUT="build"; SUBFOLDER="" ;;
-  x86_64) OUT="build/intel"; SUBFOLDER="/intel" ;;
-  *) echo "SEARCH_ARCH is arm64 or x86_64, not “$ARCH”" >&2; exit 1 ;;
-esac
-APP="$OUT/Search.app"
-NAME="Search"
+ARCH="${SEARCH_ARCH:-arm64}"
+if [ "$ARCH" != "arm64" ]; then
+  echo "Distribution target is Apple Silicon (arm64) only. x86_64 distribution has been excluded." >&2
+  exit 1
+fi
+OUT="build"
+SUBFOLDER=""
+APP="$OUT/Sen.app"
+NAME="Sen"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 # A build number that only ever goes up, so the updater can tell newer from
 # older without parsing version strings.
@@ -61,6 +62,9 @@ BUILD="$(date +%Y%m%d%H%M)"
 # The oldest macOS this runs on — in the plist, and in the appcast so an
 # older Mac is not handed a build it can't open.
 MINIMUM="14.0"
+
+# Build the native Brave adblock-rust converter engine
+cargo build --release --manifest-path crates/adblock_engine/Cargo.toml
 
 # -Osize for a release: 14% less binary (5.39 → 4.65 MB) at the same speed —
 # launch 337 against 338 ms, a scroll frame 0.26 against 0.25 ms, a key typed
@@ -74,6 +78,10 @@ BINARY="$(swift build "${SWIFTFLAGS[@]}" --show-bin-path)/Search"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/$NAME"
+if [ -f crates/adblock_engine/target/release/adblock_engine ]; then
+  cp crates/adblock_engine/target/release/adblock_engine "$APP/Contents/MacOS/adblock-converter"
+  strip -x "$APP/Contents/MacOS/adblock-converter" 2>/dev/null || true
+fi
 # The binary says which SDK it was built with, and AppKit draws the app the
 # way that SDK's macOS drew it: built with the macOS 27 SDK, a Mac on 27 gets
 # 27's window buttons and controls; said to be built with an older one, it
@@ -89,6 +97,11 @@ mv "$APP/Contents/MacOS/$NAME.sdk" "$APP/Contents/MacOS/$NAME"
 # The AppleScript dictionary (Scripting.swift): read-only, tabs' addresses
 # and titles. The plist below points to it.
 cp Search.sdef "$APP/Contents/Resources/"
+# SwiftPM resource bundles (e.g. Search_Search.bundle containing EasyList filters)
+BINDIR="$(dirname "$BINARY")"
+for BUNDLE in "$BINDIR"/*.bundle; do
+  [ -d "$BUNDLE" ] && cp -R "$BUNDLE" "$APP/Contents/Resources/"
+done
 
 # Symbols stay out of the app. The linker leaves every function's name and a
 # map back to the source in the binary — 15,000 entries, more than half of
@@ -146,7 +159,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleExecutable</key><string>$NAME</string>
-  <key>CFBundleIdentifier</key><string>com.officecommun.search</string>
+  <key>CFBundleIdentifier</key><string>com.luewire.sen</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
@@ -154,7 +167,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   $ICONNAME
   <key>LSMinimumSystemVersion</key><string>$MINIMUM</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-  <key>NSHumanReadableCopyright</key><string>© Office Commun · Search</string>
+  <key>NSHumanReadableCopyright</key><string>© Sen</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppleScriptEnabled</key><true/>
   <key>OSAScriptingDefinition</key><string>Search.sdef</string>

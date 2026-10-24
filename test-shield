@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/search-shield-tests.XXXXXX")
+trap 'rm -rf "$scratch_dir"' EXIT HUP INT TERM
+
+# Ensure adblock_engine static library is built
+cargo build --release --manifest-path "$repo_dir/crates/adblock_engine/Cargo.toml"
+
+xcrun swiftc -swift-version 5 -parse-as-library \
+  -I "$repo_dir/Sources/CAdblock/include" \
+  -L "$repo_dir/crates/adblock_engine/target/release" \
+  -ladblock_engine \
+  "$repo_dir/Sources/Search/AdblockEngine.swift" \
+  "$repo_dir/Sources/Search/Shield.swift" \
+  "$repo_dir/Tests/ShieldHarness.swift" \
+  -o "$scratch_dir/ShieldTests"
+
+"$scratch_dir/ShieldTests"

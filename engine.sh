@@ -21,7 +21,7 @@ OUT="build/engine"
 SRC="$OUT/llama.cpp"
 IDENTIFIER="com.officecommun.search.ai-engine"
 JOBS=$(sysctl -n hw.logicalcpu)
-which="${1:-all}"
+which="${1:-arm64}"
 
 mkdir -p "$OUT"
 if [ ! -d "$SRC/.git" ]; then
@@ -86,7 +86,7 @@ build() {
 }
 
 case "$which" in
-  all) build arm64; build x86_64 ;;
-  arm64|x86_64) build "$which" ;;
-  *) echo "usage: ./engine.sh [arm64|x86_64]" >&2; exit 1 ;;
+  all|arm64) build arm64 ;;
+  x86_64) echo "Distribution target is Apple Silicon (arm64) only." >&2; exit 1 ;;
+  *) echo "usage: ./engine.sh [arm64]" >&2; exit 1 ;;
 esac

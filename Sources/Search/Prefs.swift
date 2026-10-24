@@ -248,6 +248,30 @@ final class Preferences: ObservableObject {
             Store.keepsSignIns = keepsSignIns
         }
     }
+    /// Which DNS resolver handles address lookups for the browser (Settings › Privacy).
+    @Published var dnsProvider: DNSProvider {
+        didSet {
+            store.set(dnsProvider.rawValue, forKey: "privacy.dns.provider")
+            SecureDNS.shared.update(provider: dnsProvider, customURL: customDnsURL)
+        }
+    }
+    /// The DoH endpoint URL used when Secure DNS is set to Custom.
+    @Published var customDnsURL: String {
+        didSet {
+            store.set(customDnsURL, forKey: "privacy.dns.custom")
+            if dnsProvider == .custom {
+                SecureDNS.shared.update(provider: dnsProvider, customURL: customDnsURL)
+            }
+        }
+    }
+    /// Whether tracking tags (fbclid, gclid, utm_*) are stripped from addresses (Settings › Privacy).
+    @Published var cleanLinks: Bool {
+        didSet { store.set(cleanLinks, forKey: "privacy.cleanLinks") }
+    }
+    /// Whether unencrypted HTTP connections are upgraded to HTTPS (Settings › Privacy).
+    @Published var httpsOnly: Bool {
+        didSet { store.set(httpsOnly, forKey: "privacy.httpsOnly") }
+    }
     /// Whether sites may ask for a passkey here. Off sends them to the
     /// password instead — the only thing that works in a build without
     /// Apple's browser entitlement.
@@ -541,7 +565,7 @@ final class Preferences: ObservableObject {
         sleepsTabs = store.object(forKey: "tabs.sleep") as? Bool ?? true
         tabLife = TabLife(rawValue: store.integer(forKey: "tabs.close.after")) ?? .never
         sleepPace = SleepPace.chosen
-        lazyTabs = store.bool(forKey: "tabs.lazy")
+        lazyTabs = store.object(forKey: "tabs.lazy") as? Bool ?? true
         newTabAfterLast = store.bool(forKey: "tabs.newAfterLast")
         newTabPlace = store.string(forKey: "tabs.newPlace").flatMap(NewTabPlace.init(rawValue:)) ?? .next
         startsFresh = store.bool(forKey: Preferences.freshKey)
@@ -552,6 +576,10 @@ final class Preferences: ObservableObject {
         shielded = store.object(forKey: "shield") as? Bool ?? true
         let keeps = store.bool(forKey: "sites.keep")
         keepsSignIns = keeps
+        dnsProvider = store.string(forKey: "privacy.dns.provider").flatMap(DNSProvider.init) ?? .system
+        customDnsURL = store.string(forKey: "privacy.dns.custom") ?? ""
+        cleanLinks = store.object(forKey: "privacy.cleanLinks") as? Bool ?? true
+        httpsOnly = store.object(forKey: "privacy.httpsOnly") as? Bool ?? true
         // Before the first page is loaded into the store.
         Store.keepsSignIns = keeps
         Spaces.everyStore.forEach(Store.followCookies)
@@ -646,6 +674,7 @@ final class Preferences: ObservableObject {
         Preferences.tellWebKit(autocorrect: corrects)
         Substitution.register()
         pageZoom = store.object(forKey: "pageZoom") as? Double ?? 1
+        SecureDNS.shared.update(provider: dnsProvider, customURL: customDnsURL)
         // Left behind by an assistant this browser no longer has.
         for key in ["mind.model", "mind.effort", "mind.acting", "mind.width", "mind.open"] {
             store.removeObject(forKey: key)

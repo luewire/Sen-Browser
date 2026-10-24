@@ -40,23 +40,32 @@ struct SideBar: View {
     private var onRight: Bool { prefs.sidePosition == .right }
     private var innerEdge: Alignment { onRight ? .leading : .trailing }
 
-    /// The window's buttons' corner: gone in full screen, where macOS takes
-    /// them away, and back, forward and reload move up to the edge (idea 184).
-    private var lights: CGFloat { browser.fullScreen ? 0 : Metrics.sideLights }
+    /// The window's buttons' corner: reserved for traffic lights or replaced
+    /// by the Exit Fullscreen capsule button in full screen.
+    private var isFullscreen: Bool {
+        browser.fullScreen
+    }
+    private var lights: CGFloat { isFullscreen ? 0 : Metrics.sideLights }
 
     var body: some View {
         ZStack(alignment: .top) {
             // Not under the card for a new space: it isn't made of views that
             // would take the click first.
-            DragStrip(reserved: 0, below: browser.makingSpace ? .greatestFiniteMagnitude : rowsEnd, onDoubleClick: browser.newTab)
+            DragStrip(reserved: 0, below: browser.makingSpace ? .greatestFiniteMagnitude : rowsEnd, onDoubleClick: { browser.newTab(alwaysCreate: true) })
 
             // The band the lights sit in is this mode's title bar: the window
             // is dragged by it and a double-click fills the screen with it,
             // everywhere but over the three doors, which take their own
             // clicks. The lights are the title bar's own and answer first.
             HStack(spacing: 0) {
-                DragStrip()
-                    .frame(width: 10 + lights)
+                if isFullscreen {
+                    Color.clear
+                        .frame(width: 10 + 115)
+                        .allowsHitTesting(false)
+                } else {
+                    DragStrip()
+                        .frame(width: 10 + lights)
+                }
                 Color.clear
                     .frame(width: Metrics.helm)
                     .allowsHitTesting(false)
@@ -66,11 +75,29 @@ struct SideBar: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 // The traffic lights' corner, with back, forward and reload
-                // sitting right of them — the same three doors as the top
-                // bar, moved beside the lights since there's no far end of a
-                // row to put them at in this mode.
-                HStack(spacing: 0) {
-                    Color.clear.frame(width: lights)
+                // sitting right of them — or the Exit Fullscreen capsule button
+                // when in full screen.
+                HStack(spacing: 8) {
+                    if isFullscreen {
+                        Button {
+                            browser.window?.toggleFullScreen(browser.window)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("Exit Fullscreen")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Palette.muted.opacity(0.18)))
+                            .foregroundStyle(Palette.ink)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Keluar dari Layar Penuh")
+                    } else {
+                        Color.clear.frame(width: lights)
+                    }
                     Helm(browser: browser)
                     Spacer(minLength: 0)
                 }
@@ -526,7 +553,7 @@ struct SideBar: View {
     private static let footHeight: CGFloat = 26 + 10
 
     private var newTab: some View {
-        Quiet(icon: "plus", title: "New tab", height: rowHeight, size: prefs.sideTitle) { browser.launch() }
+        Quiet(icon: "plus", title: "New tab", height: rowHeight, size: prefs.sideTitle) { browser.newTab(alwaysCreate: true) }
             .padding(.top, SideBar.gap)
     }
 
@@ -548,10 +575,12 @@ private struct SideFoot: View {
     @ObservedObject var fetches: Fetches
 
     var body: some View {
+        let sideEdge: Edge = prefs.sidePosition == .right ? .leading : .trailing
         HStack(spacing: 2) {
             if prefs.usesSpaces { SpaceDot(browser: browser) }
-            ExtensionSlot(edge: .trailing, room: room)
-            BookmarkDoor(browser: browser, arrowEdge: .trailing)
+            ExtensionSlot(edge: sideEdge, room: room)
+            ShieldButton(browser: browser, arrowEdge: sideEdge)
+            BookmarkDoor(browser: browser, arrowEdge: sideEdge)
             // Only while a download is running, and a moment after.
             FetchDoor(browser: browser, fetches: fetches)
             Spacer(minLength: 0)
@@ -564,7 +593,7 @@ private struct SideFoot: View {
     /// is 26 points, with 2 between them.
     private var room: Int {
         let door: CGFloat = 26 + 2
-        var kept = 2  // the puzzle and bookmarks
+        var kept = 3  // the puzzle, shield and bookmarks
         if prefs.usesSpaces { kept += 1 }
         if FetchDoor.shows(fetches, prefs) { kept += 1 }
         let free = prefs.sideWidth - 2 * 10 + 2 - CGFloat(kept) * door

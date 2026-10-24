@@ -29,11 +29,12 @@ enum Web {
     /// included, and registering a name twice is a hard crash.
     @MainActor static func release(_ controller: WKUserContentController) {
         for name in [ScrollRelay.name, VeilRelay.name, FormRelay.name, ImageRelay.name, MediaKeys.name,
-                     StoreRelay.name, PasskeyRelay.name, MiddleRelay.name, IconRelay.name, PopupGestureRelay.name, DuskRelay.name] {
+                     StoreRelay.name, PasskeyRelay.name, MiddleRelay.name, IconRelay.name, PopupGestureRelay.name, DuskRelay.name, AirPlay.name] {
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             controller.removeScriptMessageHandler(forName: name, contentWorld: .page)
         }
         controller.removeScriptMessageHandler(forName: HoveredLink.name, contentWorld: .defaultClient)
+        controller.removeScriptMessageHandler(forName: AirPlay.name, contentWorld: .defaultClient)
     }
 
     /// What every view says it is after "AppleWebKit … (KHTML, like Gecko)"
@@ -86,6 +87,10 @@ enum Web {
         // cookies, its own sign-ins, and nothing left behind when it closes.
         // With spaces on, each space's tabs share a store of that space's.
         config.websiteDataStore = store ?? (shy ? .nonPersistent() : MainActor.assumeIsolated { Spaces.store(for: space ?? Spaces.current) })
+        MainActor.assumeIsolated { SecureDNS.shared.apply(to: config.websiteDataStore) }
+        if #available(macOS 12.0, *) {
+            config.upgradeKnownHostsToHTTPS = Store.settings.object(forKey: "privacy.httpsOnly") as? Bool ?? true
+        }
         // Web notifications go through the store (see Notifications.swift);
         // a private tab's is left without, and a page there is refused.
         if !shy { let kept = config.websiteDataStore; MainActor.assumeIsolated { SiteNotifications.shared.attach(kept) } }
@@ -109,8 +114,7 @@ enum Web {
         // page comes back.
         config.applicationNameForUserAgent = Web.userAgentName
         config.allowsAirPlayForMediaPlayback = true
-        // Off by default on macOS, which is why a full-screen button on a video
-        // did nothing at all: the page asks, and WebKit refuses without a word.
+        // Native WebKit element fullscreen enabled so YouTube and players recognize fullscreen capability.
         config.preferences.isElementFullscreenEnabled = true
         // WebKit's synchronous popup check rejects async POST sign-ins.
         // The UI delegate instead consumes a recent trusted interaction
@@ -119,7 +123,11 @@ enum Web {
         // Sound waits for a click, as everywhere; video too when Settings
         // says videos wait (Never Auto-Play, in Safari's words).
         config.mediaTypesRequiringUserActionForPlayback = Web.playback
-        if Store.testing, !Store.measuring { config.preferences.inactiveSchedulingPolicy = .none }
+        if Store.testing, !Store.measuring {
+            config.preferences.inactiveSchedulingPolicy = .none
+        } else {
+            config.preferences.inactiveSchedulingPolicy = .throttle
+        }
         inspector(config.preferences)
         return config
     }
@@ -339,7 +347,7 @@ final class Tab: ObservableObject, Identifiable {
         address = url
         failure = nil
     }
-    @Published private(set) var progress: Double = 0
+    private(set) var progress: Double = 0
     @Published private(set) var loading = false
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
@@ -753,6 +761,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.add(middles, contentWorld: Web.world, name: MiddleRelay.name)
         controller.add(dusk, contentWorld: Web.world, name: DuskRelay.name)
         PopupGestureRelay.install(on: controller)
+        AirPlay.install(on: controller)
         Shield.shared.protect(controller)
         built = web
         // A tab muted before it went to sleep wakes muted.
@@ -761,7 +770,14 @@ final class Tab: ObservableObject, Identifiable {
 
         watch = [
             web.observe(\.title, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.title = self?.built?.title ?? "" }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let t = self.built?.title ?? ""
+                    self.title = t
+                    if !t.isEmpty, self.built?.unpainted == true {
+                        self.built?.showFirstFrame()
+                    }
+                }
             },
             web.observe(\.url, options: [.new]) { [weak self] _, _ in
                 MainActor.assumeIsolated {
@@ -795,13 +811,25 @@ final class Tab: ObservableObject, Identifiable {
                 MainActor.assumeIsolated { self?.progress = self?.built?.estimatedProgress ?? 0 }
             },
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.loading = self?.built?.isLoading ?? false }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let val = self.built?.isLoading ?? false
+                    if self.loading != val { self.loading = val }
+                }
             },
             web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.canGoBack = self?.built?.canGoBack ?? false }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let val = self.built?.canGoBack ?? false
+                    if self.canGoBack != val { self.canGoBack = val }
+                }
             },
             web.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.canGoForward = self?.built?.canGoForward ?? false }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let val = self.built?.canGoForward ?? false
+                    if self.canGoForward != val { self.canGoForward = val }
+                }
             },
             // A page's full screen, as WebKit has it. In once its own window
             // has the page (a placeholder is left in ours, so the chrome going
@@ -870,6 +898,8 @@ final class Tab: ObservableObject, Identifiable {
         let controller = built.configuration.userContentController
         controller.removeAllUserScripts()
         controller.addUserScript(PopupGestureRelay.userScript)
+        controller.addUserScript(AirPlay.userScript)
+        controller.addUserScript(AirPlay.pageWorldUserScript)
         controller.addUserScript(
             WKUserScript(source: ScrollRelay.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Web.world)
         )
@@ -956,6 +986,9 @@ final class Tab: ObservableObject, Identifiable {
             controller.addUserScript(
                 WKUserScript(source: dusk, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: Web.world)
             )
+        }
+        if Shield.shared.enabled, !Shield.shared.isPaused(on: (url ?? pageAddress)?.host) {
+            controller.addUserScript(Shield.userScript)
         }
         guard !css.isEmpty else { return }
         controller.addUserScript(
@@ -1253,6 +1286,32 @@ final class Tab: ObservableObject, Identifiable {
         }
     }
 
+    /// Whether any media element (video or audio) is currently playing,
+    /// even if it is muted. Used to prevent sleeping active playback tabs.
+    func isPlayingMedia(_ done: @escaping (Bool) -> Void) {
+        guard let built else { return done(false) }
+        if noisy { return done(true) }
+        let js = """
+        (function() {
+            try {
+                var els = document.querySelectorAll('video, audio');
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    if (!el.paused && !el.ended && el.readyState > 2) {
+                        return true;
+                    }
+                }
+            } catch (e) {}
+            return false;
+        })()
+        """
+        built.evaluateJavaScript(js) { value, _ in
+            MainActor.assumeIsolated {
+                done((value as? Bool) == true)
+            }
+        }
+    }
+
     /// The page as it looks right now, compressed. Drawn by the page's own
     /// process, so a view that is off screen — every tab but the one you are
     /// on — can still be pictured. Nil when there is nothing to draw.
@@ -1516,11 +1575,20 @@ final class Tab: ObservableObject, Identifiable {
     func close() {
         onZoom = nil
         onLink = nil
+        onKeys = nil
         onPick = nil
         onPickEnd = nil
+        onPickTrouble = nil
         onSignIn = nil
         onField = nil
         onCredentials = nil
+        onImageMenu = nil
+        searchName = nil
+        onSearch = nil
+        onStoreAdd = nil
+        onMiddleClick = nil
+        onFileLink = nil
+        onCross = nil
         discard()
     }
 
@@ -1560,6 +1628,7 @@ final class Tab: ObservableObject, Identifiable {
     /// back-forward cache. The tab keeps its address; `web` builds again the
     /// next time anyone asks for it.
     private func discard() {
+        if immersed { immersed = false }
         popupGesture.clear()
         if !blockedPopups.isEmpty { blockedPopups = [] }
         watch = []
@@ -1570,6 +1639,40 @@ final class Tab: ObservableObject, Identifiable {
         guard let web = built else { return }
         built = nil
         Passkeys.shared.forget(web)
+        if #available(macOS 15.4, *) {
+            ExtensionCapture.shared.unwatch(web)
+        }
+
+        // 1. Exit element fullscreen in DOM and pause/unload media elements
+        web.evaluateJavaScript("""
+        if (document.exitFullscreen) {
+            document.exitFullscreen().catch(function () {});
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+        document.querySelectorAll('video, audio').forEach(function (el) {
+            try {
+                el.pause();
+                el.removeAttribute('src');
+                el.load();
+            } catch (e) {}
+        });
+        """, completionHandler: nil)
+
+        // 2. Close WebKit fullscreen presentations (video fullscreen / PiP) and suspend playback
+        if #available(macOS 12.0, *) {
+            web.closeAllMediaPresentations(completionHandler: nil)
+            web.pauseAllMediaPlayback(completionHandler: nil)
+            web.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+        }
+
+        // 3. If WebKit has an associated fullscreen window, close and order it out immediately
+        if web.responds(to: NSSelectorFromString("_fullScreenWindow")),
+           let fsWindow = web.perform(NSSelectorFromString("_fullScreenWindow"))?.takeUnretainedValue() as? NSWindow {
+            fsWindow.orderOut(nil)
+            fsWindow.close()
+        }
+
         let controller = web.configuration.userContentController
         Web.release(controller)
         controller.removeAllUserScripts()
@@ -1578,6 +1681,9 @@ final class Tab: ObservableObject, Identifiable {
         if #available(macOS 15.4, *), controller === Extensions.pages {
             PopupGestureRelay.install(on: controller)
             controller.addUserScript(PopupGestureRelay.userScript)
+            AirPlay.install(on: controller)
+            controller.addUserScript(AirPlay.userScript)
+            controller.addUserScript(AirPlay.pageWorldUserScript)
         }
         web.onMenuClosed = nil
         web.onPull = nil
@@ -1587,12 +1693,20 @@ final class Tab: ObservableObject, Identifiable {
         web.searchName = nil
         web.onSearch = nil
         web.stopLoading()
+        // Unload the document so all media sessions and WebProcess timers are destroyed
+        web.load(URLRequest(url: URL(string: "about:blank")!))
+
         // Detaching a view doesn't end capture while something still holds it.
         web.setCameraCaptureState(.none, completionHandler: nil)
         web.setMicrophoneCaptureState(.none, completionHandler: nil)
         web.navigationDelegate = nil
         web.uiDelegate = nil
         web.removeFromSuperview()
+
+        // 4. Terminate the WebKit page and release WebProcess resources
+        if web.responds(to: NSSelectorFromString("_close")) {
+            web.perform(NSSelectorFromString("_close"))
+        }
     }
 }
 
@@ -1907,6 +2021,7 @@ final class PageView: WKWebView {
 
     override func mouseDown(with event: NSEvent) {
         onTouch?()
+        AirPlay.shared.noteMouseDown(at: convert(event.locationInWindow, from: nil), in: self)
         super.mouseDown(with: event)
     }
 
@@ -1988,12 +2103,22 @@ final class PageView: WKWebView {
         unsafeBitCast(method(for: observe), to: Setter.self)(self, observe, PageView.firstFrame)
         unpainted = true
         alphaValue = 0
+
+        // Safety fallback: ensure a web view never stays transparent (white screen)
+        // if WebKit rendering progress events fail to trigger on SPAs or redirects.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.unpainted else { return }
+            self.showFirstFrame()
+        }
     }
 
     /// In, quickly: the page is there, and the fade only covers the frame
     /// between WebKit laying it out and putting it on screen.
     func showFirstFrame() {
-        guard unpainted else { return }
+        guard unpainted else {
+            if alphaValue < 1 { alphaValue = 1 }
+            return
+        }
         unpainted = false
         onFirstFrame?()
         NSAnimationContext.runAnimationGroup { context in

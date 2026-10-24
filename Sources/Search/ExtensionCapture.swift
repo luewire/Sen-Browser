@@ -338,6 +338,15 @@ final class ExtensionCapture: NSObject, WKScriptMessageHandlerWithReply, Observa
 
     func watch(_ web: WKWebView, id: String) { register(web, id: id) }
 
+    func unwatch(_ web: WKWebView) {
+        let key = ObjectIdentifier(web)
+        guard watched.removeValue(forKey: key) != nil else { return }
+        for path in ExtensionCapture.keys where path != "_displayCaptureState" || web.responds(to: NSSelectorFromString(path)) {
+            web.removeObserver(self, forKeyPath: path)
+        }
+        changed()
+    }
+
     private func register(_ web: WKWebView, id: String?) {
         let key = ObjectIdentifier(web)
         if let entry = watched[key], entry.web != nil {

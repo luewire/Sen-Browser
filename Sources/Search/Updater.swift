@@ -133,52 +133,32 @@ final class Updater: ObservableObject {
     func checkIfDue(then say: @escaping (String) -> Void) {
         self.say = say
         Swap.sweep()
-        // And again every hour for as long as the app is up — a browser that
-        // is left open for a week would otherwise never look.
-        if clock == nil {
-            clock = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.checkIfDue() }
-            }
-            clock?.tolerance = 60 * 5
-        }
-        // At every launch, whenever the last look was.
-        check { _ in }
+        // Automatic and background update checks disabled for self-managed browser.
     }
 
     private var clock: Timer?
 
     /// Every hour, give or take the clock's tolerance: one small signed file.
     private func checkIfDue() {
-        let last = Store.settings.object(forKey: lastKey) as? Date ?? .distantPast
-        guard Updater.overridden || Date().timeIntervalSince(last) > 60 * 50 else { return }
+        guard Updater.overridden else { return }
         check { _ in }
     }
 
     /// Search › Check for Updates…: the result is said in the line at the
     /// foot of the window, and an available update is offered in the menu.
     func checkByHand() {
-        switch stage {
-        case .ready(let next):
-            say?("Search \(next.version) is ready — relaunch to use it")
-            return
-        case .fetching(let next):
-            say?("Search \(next.version) is downloading…")
-            return
-        default: break
-        }
         guard !checking else { return }
-        say?("Checking for updates…")
-        check { [weak self] found in
-            guard let self else { return }
-            if found == nil { self.say?("Search is up to date"); return }
-            // The waiting branch or `take` announces the next state afterward.
-        }
+        say?("Sen is up to date")
     }
 
     /// Now, because somebody asked. `done` gets the newer build the feed
     /// names, or nil when this is the latest; what becomes of it after that
     /// is said through the line handed to `checkIfDue`.
     func check(then done: @escaping (Release?) -> Void) {
+        guard Updater.overridden else {
+            done(nil)
+            return
+        }
         guard !checking else { return }
         checking = true
         Task { [weak self] in
@@ -201,7 +181,7 @@ final class Updater: ObservableObject {
             case .waiting(let known) where known == found: break
             case .none, .offered, .waiting:
                 stage = .waiting(found)
-                say?("Search \(found.version) is out — choose Install Update in the Search menu")
+                say?("Sen \(found.version) is out — choose Install Update in the Sen menu")
             }
         }
     }
@@ -251,7 +231,7 @@ final class Updater: ObservableObject {
         case .none, .offered, .waiting: break
         }
         stage = .fetching(release)
-        say?("Search \(release.version) is downloading…")
+        say?("Sen \(release.version) is downloading…")
         Task.detached(priority: .utility) {
             let worked: Bool
             do {
@@ -268,8 +248,8 @@ final class Updater: ObservableObject {
         guard case .fetching(let fetching) = stage, fetching == release else { return }
         stage = worked ? .ready(release) : .offered(release)
         say?(worked
-            ? "Search \(release.version) is ready — it's there the next time you open it"
-            : "Search \(release.version) is out — choose Download Update in the Search menu")
+            ? "Sen \(release.version) is ready — it's there the next time you open it"
+            : "Sen \(release.version) is out — choose Download Update in the Sen menu")
     }
 
     /// Quit, and come back as the new one. A shell waits for this process

@@ -664,6 +664,61 @@ struct SettingsPanel: View {
                     }
                 }
                 Rule()
+                Line("Shields down for", "Sites where you've turned off ad and popup blocking") {
+                    if shield.paused.isEmpty {
+                        Text("None")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Palette.muted)
+                    }
+                }
+                ForEach(shield.paused.sorted(), id: \.self) { host in
+                    Rule()
+                    Line(host, "Shields are paused on this site") {
+                        Pill("Remove") {
+                            Shield.shared.pause(host, false)
+                            if browser.hereHost == host {
+                                browser.reload()
+                            }
+                        }
+                    }
+                }
+                Rule()
+                Line("Clean links", "Strip tracking tags like fbclid, gclid, and utm_source from addresses you open") {
+                    Segmented(options: [(false, "Off"), (true, "On")], selection: $prefs.cleanLinks)
+                }
+                Rule()
+                Line("HTTPS only", "Always use a secure connection when a site supports it") {
+                    Segmented(options: [(false, "Off"), (true, "On")], selection: $prefs.httpsOnly)
+                }
+                Rule()
+                Line("Secure DNS", "Look up site addresses over HTTPS so your provider can't read or block them") {
+                    Picker("", selection: $prefs.dnsProvider) {
+                        ForEach(DNSProvider.allCases) { provider in
+                            Text(provider.title).tag(provider)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+                if prefs.dnsProvider == .custom {
+                    ZStack(alignment: .leading) {
+                        if prefs.customDnsURL.isEmpty {
+                            Text("https://example.com/dns-query")
+                                .foregroundStyle(Palette.muted.opacity(0.8))
+                        }
+                        TextField("", text: $prefs.customDnsURL)
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(Palette.ink)
+                    }
+                    .font(.system(size: 12.5))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Palette.wash, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 11)
+                }
+                Rule()
                 Line("Prevent cross-site tracking", "As in Safari. Off, sites you rarely open keep their sign-ins, and trackers inside other sites can follow you across them again, as in Chrome. Private tabs keep it on") {
                     Switch(on: Binding(get: { !prefs.keepsSignIns }, set: { prefs.keepsSignIns = !$0 }))
                 }
@@ -704,7 +759,7 @@ struct SettingsPanel: View {
                     .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
                     .frame(height: 34)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Search")
+                    Text("Sen")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                     Text("by Office Commun · version \(Updater.version)")
@@ -715,12 +770,6 @@ struct SettingsPanel: View {
             .padding(.bottom, 2)
 
             Card {
-                Line(versionTitle, versionDetail) { versionControl }
-                Rule()
-                Line("Install updates on its own", "Off, Search still looks every hour and tells you, and installs only when you press Install") {
-                    Switch(on: $prefs.installsUpdates)
-                }
-                Rule()
                 Line("Found something wrong?", "Opens a draft with the version already in it") {
                     Pill("Send Feedback") { Links.writeFeedback() }
                 }
